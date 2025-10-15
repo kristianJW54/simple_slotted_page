@@ -15,12 +15,6 @@
 // - OS Page  -> Usually 8kb
 // - Database -> Usually 16kb
 
-//---- Page Management ------//
-
-// There are different ways to manage pages in files on disk
-// Because this is the job of a DBMS, our slotted page implementation can be ignorant of that
-// but, we must be aware as we may need to design traits for such uses
-
 /*NOTE:
 	---- Page Header ------
 	Usually 24 bytes
@@ -47,6 +41,9 @@
 
 const PAGE_SIZE: usize = 4096;
 
+// Page flags bit arrays
+const TUPLE_FLAG: u16 = 1 << 0;
+
 // Page ID new_type
 pub struct PageID(pub u64);
 pub struct SlotID(pub u16);
@@ -54,6 +51,8 @@ pub struct RowID {
 	p: PageID,
 	s: SlotID,
 }
+// Free Space Locators
+pub struct LocationIndex(u16);
 
 pub struct Page {
 	slotted_page: [u8; PAGE_SIZE],
@@ -68,32 +67,42 @@ impl Page {
 	// For use with new
 	// -
 	// -
-
-	fn new(page_id: PageID, page_type: u8) -> Self {
+	// TODO: Add a new_with_data?
+	fn new(page_id: PageID, page_type: u16) -> Self {
 		// TODO : Add the header and structure to the slotted_page
-		let slotted_page = [0u8; PAGE_SIZE];
+		let mut slotted_page = [0u8; PAGE_SIZE];
+
+		// Add the id at the beginning of the header
+		let id: [u8; 8] = page_id.0.to_le_bytes();
+		slotted_page[..8].copy_from_slice(&id);
+
+		// Add the flags
+		slotted_page[8.. 10].copy_from_slice(&page_type.to_le_bytes());
+
+		// For free space locators we do nothing because they are zero
+
 		Self { slotted_page, }
 	}
 
 	// Page main methods
-	pub fn get(&self, slot_id: SlotID) -> Option<&[u8]> {}
-	pub fn insert(&mut self, record: &[u8]) -> Result<SlotID, String> {}
-	pub fn remove(&mut self, slot_id: SlotID) -> Result<(), String> {}
-	pub fn compact(&mut self) -> Result<(), String> {}
+	// pub fn get(&self, slot_id: SlotID) -> Option<&[u8]> {}
+	// pub fn insert(&mut self, record: &[u8]) -> Result<SlotID, String> {}
+	// pub fn remove(&mut self, slot_id: SlotID) -> Result<(), String> {}
+	// pub fn compact(&mut self) -> Result<(), String> {}
 
 	// Internal Helpers
-	fn get_header(&self) -> HeaderView {}
-	fn set_header(&mut self, header: HeaderView) {}
-	fn
+	// fn get_header(&self) -> HeaderView {}
+	// fn set_header(&mut self, header: HeaderView) {}
 }
 
 // NOTE: Here we define a header view for copying out the header data from the page
 
 struct HeaderView {
-	flags: u8,
+	id: PageID,
+	flags: u16,
 	start_free_space: u16,
 	end_free_space: u16,
-
+	// More to come...
 }
 
 
@@ -109,9 +118,19 @@ mod tests {
 
 		println!("page_type: {:08b} -> {page_type}", page_type);
 
-		let page = Page::new(page_id, page_type);
+		let page = Page::new(page_id, TUPLE_FLAG);
 
 		println!("page - {:?}", page.slotted_page);
+
+	}
+
+	#[test]
+	fn to_le_bytes_test() {
+
+		let v = 16u16;
+
+		println!("v -> {v} -> {:?}", v.to_le_bytes())
+
 
 	}
 }
