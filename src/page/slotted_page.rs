@@ -111,15 +111,17 @@ impl Page {
 	}
 
 	// header returns a reference to a HeaderStruct not exclusive or mutable
-	fn header(&self) -> &HeaderStruct {
+	fn header(&mut self) -> &mut HeaderStruct {
 		assert_eq!(mem::size_of::<HeaderStruct>(), HEADER_SIZE, "Header size not equal to header struct alignment");
 		// SAFETY: We guarantee that:
 		//  - PAGE_SIZE ≥ HEADER_OFFSET + size_of::<HeaderStruct>()
-		//  - buf.as_ptr().add(HEADER_OFFSET) is properly aligned for HeaderStruct
+		//  - slotted_page.as_ptr().add(HEADER_OFFSET) is properly aligned for HeaderStruct
 		//  - the bytes at that offset have been initialized to HeaderStruct form
 		unsafe {
-			// Need to understand this...
-			&*(self.slotted_page.as_ptr().add(PAGE_OFFSET) as *const HeaderStruct)
+			//SAFETY: We are safe to return a mutable ref to HeaderStruct because borrow checker
+			// enforces that only one exclusive of page is available and, therefore, we cannot create
+			// more than one mut ref HeaderStruct
+			&mut *(self.slotted_page.as_ptr().add(PAGE_OFFSET) as *mut HeaderStruct)
 		}
 	}
 
@@ -131,7 +133,7 @@ impl Page {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 struct HeaderStruct {
 	page_id:   u64, // Needs 8 bytes alignment -> Offset 0 = OK
 	flags:     u16, // Needs 2 bytes alignment -> Offset 8 % 2 = 0 = OK
@@ -166,16 +168,11 @@ mod tests {
 	fn test_unsafe_header() {
 
 		let page_id = PageID(1234u64);
-		let page = Page::new(page_id, TUPLE_FLAG);
+		let mut page = Page::new(page_id, TUPLE_FLAG);
 
 		let header = page.header();
 
 		println!("{:?}", header);
-
-		let test_head = HeaderStruct{page_id: 0, flags: 1, slot_count: 2, free_start: 3, free_end: 4};
-		// let risky = *(&test_head); // Copy fresh struct as HeaderStruct implements Copy
-		let risky = unsafe { *(&test_head as *const HeaderStruct) }; // Zero copy uses raw pointers
-		println!("Risky -> {:?}", risky);
 
 		println!("size_of::<HeaderStruct>() = {}", mem::size_of::<HeaderStruct>());
 		println!("align_of::<HeaderStruct>()  = {}", mem::align_of::<HeaderStruct>());
