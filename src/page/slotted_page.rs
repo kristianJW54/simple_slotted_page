@@ -77,8 +77,11 @@ pub struct RowID {
 	p: PageID,
 	s: SlotID,
 }
-// Free Space Locators
-pub struct LocationIndex(u16);
+
+enum PageType {
+	Internal(u8),
+	Leaf(u8),
+}
 
 pub struct Page {
 	slotted_page: [u8; PAGE_SIZE],
@@ -111,8 +114,8 @@ impl Page {
 	}
 
 	// header returns a reference to a HeaderStruct not exclusive or mutable
-	fn header(&mut self) -> &mut HeaderStruct {
-		assert_eq!(mem::size_of::<HeaderStruct>(), HEADER_SIZE, "Header size not equal to header struct alignment");
+	fn header_mut(&mut self) -> &mut Header {
+		assert_eq!(mem::size_of::<Header>(), HEADER_SIZE, "Header size not equal to header struct alignment");
 		// SAFETY: We guarantee that:
 		//  - PAGE_SIZE ≥ HEADER_OFFSET + size_of::<HeaderStruct>()
 		//  - slotted_page.as_ptr().add(HEADER_OFFSET) is properly aligned for HeaderStruct
@@ -121,7 +124,7 @@ impl Page {
 			//SAFETY: We are safe to return a mutable ref to HeaderStruct because borrow checker
 			// enforces that only one exclusive of page is available and, therefore, we cannot create
 			// more than one mut ref HeaderStruct
-			&mut *(self.slotted_page.as_ptr().add(PAGE_OFFSET) as *mut HeaderStruct)
+			&mut *(self.slotted_page.as_ptr().add(PAGE_OFFSET) as *mut Header)
 		}
 	}
 
@@ -134,14 +137,25 @@ impl Page {
 
 #[repr(C)]
 #[derive(Debug)]
-struct HeaderStruct {
+struct Header {
 	page_id:   u64, // Needs 8 bytes alignment -> Offset 0 = OK
 	flags:     u16, // Needs 2 bytes alignment -> Offset 8 % 2 = 0 = OK
-	slot_count: u8, // Needs 1 byte  alignment -> Offset 10 % 2 = 0 = OK
+	slot_count: u16, // Needs 2 byte  alignment -> Offset 10 % 2 = 0 = OK
 	free_start: u16,// Needs 2 bytes alignment -> Offset 12 % 2 = 0 = OK
 	free_end:   u16,// Needs 2 bytes alignment -> Offset 12 % 2 = 0 = OK
 	// Final Offset = 16 (after padding) = multiple of 8 so no further padding
 }
+
+
+// The only way to index into cells within the page is through the SlotEntry which is the directory
+// for the ptr and len of all cells
+
+struct SlotEntry {
+	id: u8,
+	len: u8,
+}
+
+// We would want to use the impl block to build cell views but tie them to the lifetime of the page
 
 
 #[cfg(test)]
@@ -170,12 +184,12 @@ mod tests {
 		let page_id = PageID(1234u64);
 		let mut page = Page::new(page_id, TUPLE_FLAG);
 
-		let header = page.header();
+		let header = page.header_mut();
 
 		println!("{:?}", header);
 
-		println!("size_of::<HeaderStruct>() = {}", mem::size_of::<HeaderStruct>());
-		println!("align_of::<HeaderStruct>()  = {}", mem::align_of::<HeaderStruct>());
+		println!("size_of::<HeaderStruct>() = {}", mem::size_of::<Header>());
+		println!("align_of::<HeaderStruct>()  = {}", mem::align_of::<Header>());
 
 	}
 
