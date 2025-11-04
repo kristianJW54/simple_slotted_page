@@ -128,6 +128,13 @@ impl Page {
 		}
 	}
 
+	fn slot_dir_mut(&mut self) -> SlotDir<'_> {
+
+		// TODO - Finish - we try return zero size slice and see how we go with future methods
+
+		SlotDir{ se: &mut [0;0] }
+	}
+
 	// Page main methods
 	// pub fn get(&self, slot_id: SlotID) -> Option<&[u8]> {}
 	// pub fn insert(&mut self, record: &[u8]) -> Result<SlotID, String> {}
@@ -147,9 +154,18 @@ struct Header {
 }
 
 
-// The only way to index into cells within the page is through the SlotEntry which is the directory
+// The only way to index into cells within the page is through the SlotDir which is the directory
 // for the ptr and len of all cells
 
+struct SlotDir<'a> {
+	se: &'a mut [u8],
+}
+
+//TODO Impl SlotDir and also implement Iter to go through SlotEntries
+// The Impl block should define methods for extracting SlotEntry and working with them?
+
+// We need to be able to cast to SlotEntry to avoid from_le_bytes.
+#[repr(C)]
 struct SlotEntry {
 	id: u8,
 	len: u8,
