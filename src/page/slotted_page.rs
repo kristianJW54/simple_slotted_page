@@ -46,7 +46,7 @@
 // If total free space allows but the fragmentation does not then we can rebuilt the page - otherwise we must
 // Use overflow page
 
-use std::mem;
+use std::{mem, slice};
 
 const PAGE_SIZE: usize = 4096;
 const SLOT_ENTRY_SIZE: usize = 4;
@@ -168,14 +168,13 @@ impl Page {
 	}
 
 	fn slot_dir_mut(&mut self) -> SlotDir<'_> {
-
-		// TODO - Finish - we try return zero size slice and see how we go with future methods
 		let header = HEADER_SIZE;
 		let lower = self.free_start();
+		let sc = self.slot_count() as usize;
+		let slot_bytes = &mut self.slotted_page[header..lower];
 
-		let slot_dir = &mut self.slotted_page[header..lower];
+		SlotDir::from_raw_bytes_mut(sc, slot_bytes)
 
-		SlotDir{ se: slot_dir }
 	}
 
 	// Page main methods
@@ -201,12 +200,41 @@ struct Header {
 // The only way to index into cells within the page is through the SlotDir which is the directory
 // for the ptr and len of all cells
 
-// TODO - We need to cast once to [SlotEntry]
 //NOTE: We do so in memory using Little-Endian and when we flush to disk we enforce that byte layout by writing it that way
 // To enforce cross architecture portability
 
 struct SlotDir<'a> {
-	se: &'a mut [u8],
+	se: &'a mut [SlotEntry],
+}
+
+impl SlotDir<'_> {
+	fn from_raw_bytes_mut(slot_count: usize, bytes: &'_ mut [u8]) -> SlotDir<'_> {
+
+		let expected_len = slot_count * mem::size_of::<SlotEntry>();
+		let actual_len = bytes.len();
+
+		assert_eq!(
+			actual_len,
+			expected_len,
+			"SlotDir region length mismatch: got {} bytes, expected {} bytes ({} entries * {} bytes each)",
+			actual_len,
+			expected_len,
+			slot_count,
+			mem::size_of::<SlotEntry>(),
+		);
+
+		// Sanity check: Slot Entry must be of size 2
+		assert_eq!(mem::size_of::<SlotEntry>(), 2);
+
+		//SAFETY: We ensure the correct alignment and size of SlotEntry and that the bytes point to a valid
+		// region of data as this method is called only within the Page Impl block and the byte slice extracted
+		// is the exact region of the slot array.
+		// We also ensure that is only called in an exclusive mutably borrowed method ties to the lifetime of the Page
+		let slot_entries = unsafe {
+			slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut SlotEntry, slot_count)
+		};
+		SlotDir { se: slot_entries }
+	}
 }
 
 //TODO Impl SlotDir and also implement Iter to go through SlotEntries
@@ -214,10 +242,12 @@ struct SlotDir<'a> {
 
 // We need to be able to cast to SlotEntry to avoid from_le_bytes.
 #[repr(C)]
+#[derive(Debug)]
 struct SlotEntry {
-	id: u8,
+	offset: u8,
 	len: u8,
 }
+
 
 // We would want to use the impl block to build cell views but tie them to the lifetime of the page
 
@@ -258,12 +288,43 @@ mod tests {
 	}
 
 	#[test]
-	fn to_le_bytes_test() {
+	fn zero_slot_dir_from_new_page() {
+		let page_id = PageID(1234u64);
+		let mut page = Page::new(page_id, PageType::Internal);
 
-		let v = 16u16;
+		let slot_dir = page.slot_dir_mut();
 
-		println!("v -> {v} -> {:?}", v.to_le_bytes())
+		println!("slot_dir {:?}", slot_dir.se);
 
+	}
+
+	#[test]
+	fn slot_dir_after_adding_slot() {
+
+		let page_id = PageID(1234u64);
+		let mut page = Page::new(page_id, PageType::Internal);
+
+		let slot_dir = page.slot_dir_mut();
+
+		assert_eq!(slot_dir.se.len(), 0);
+
+		drop(slot_dir);
+
+		let se = SlotEntry { offset: 1, len: 10 };
+
+		let bytes = unsafe { slice::from_raw_parts((&se as *const SlotEntry).cast::<u8>(), mem::size_of::<SlotEntry>()) };
+
+		let start = page.free_start();
+
+		page.slotted_page[start..start + mem::size_of::<SlotEntry>()].copy_from_slice(bytes);
+
+		let header = page.header_mut();
+		header.slot_count += 1;
+		header.free_start += 2;
+
+		let slot_dir = page.slot_dir_mut();
+
+		println!("se {:?}", slot_dir.se[0])
 
 	}
 }
