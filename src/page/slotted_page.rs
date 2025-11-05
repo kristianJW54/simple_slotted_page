@@ -110,6 +110,8 @@ impl Page {
 		Self { slotted_page, }
 	}
 
+	// NOTE: Need to check for NonNull ptr OR maybe wrap ptr in NonNull etc
+
 	// header returns a reference to a HeaderStruct not exclusive or mutable
 	fn header(&self) -> &HeaderStruct {
 		assert_eq!(mem::size_of::<HeaderStruct>(), HEADER_SIZE, "Header size not equal to header struct alignment");
@@ -119,6 +121,10 @@ impl Page {
 		//  - the bytes at that offset have been initialized to HeaderStruct form
 		unsafe {
 			// Need to understand this...
+
+			//“When using a raw pointer, you must manually ensure that the pointer is non-null,
+			// properly aligned for the type T, points to initialized memory of type T, and meets the aliasing/mutability rules.”
+
 			&*(self.slotted_page.as_ptr().add(PAGE_OFFSET) as *const HeaderStruct)
 		}
 	}
