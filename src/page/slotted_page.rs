@@ -60,8 +60,10 @@ const PAGE_HEADER_ID_SIZE: usize = 8;
 const PAGE_HEADER_ID_OFFSET: usize = PAGE_OFFSET;  // 0
 const PAGE_HEADER_FLAG_SIZE: usize = 2;
 const PAGE_HEADER_FLAG_OFFSET: usize = PAGE_HEADER_ID_OFFSET + PAGE_HEADER_ID_SIZE;  // 8
-const PAGE_SLOT_COUNT_SIZE: usize = 2;
-const PAGE_SLOT_COUNT_OFFSET: usize = PAGE_HEADER_FLAG_OFFSET + PAGE_HEADER_FLAG_SIZE; // 10
+const PAGE_TYPE_SIZE: usize = 1;
+const PAGE_TYPE_OFFSET: usize = PAGE_HEADER_FLAG_OFFSET + PAGE_HEADER_FLAG_SIZE; // 9
+const PAGE_SLOT_COUNT_SIZE: usize = 1;
+const PAGE_SLOT_COUNT_OFFSET: usize = PAGE_TYPE_OFFSET + PAGE_TYPE_SIZE; // 10
 const HEADER_FREE_LOCATOR_SIZE: usize = 2; // free_start or free_end size
 const HEADER_FREE_START_OFFSET: usize = PAGE_SLOT_COUNT_OFFSET + PAGE_SLOT_COUNT_SIZE; // 12
 const HEADER_FREE_END_OFFSET: usize = HEADER_FREE_START_OFFSET + HEADER_FREE_LOCATOR_SIZE; // 14
@@ -77,8 +79,31 @@ pub struct RowID {
 	p: PageID,
 	s: SlotID,
 }
-// Free Space Locators
-pub struct LocationIndex(u16);
+
+enum PageType {
+	Internal,
+	Leaf,
+}
+
+impl TryFrom<u8> for PageType {
+	type Error = ();
+	fn try_from(value: u8) -> Result<Self, Self::Error> {
+		match value {
+			1 => Ok(PageType::Internal),
+			2 => Ok(PageType::Leaf),
+			_ => Err(()),
+		}
+	}
+}
+
+impl From<PageType> for u8 {
+	fn from(value: PageType) -> Self {
+		match value {
+			PageType::Internal => 1,
+			PageType::Leaf => 2,
+		}
+	}
+}
 
 pub struct Page {
 	slotted_page: [u8; PAGE_SIZE],
@@ -88,7 +113,7 @@ pub struct Page {
 
 impl Page {
 	// TODO: Add a new_with_data?
-	fn new(page_id: PageID, page_type: u16) -> Self {
+	fn new(page_id: PageID, page_type: PageType) -> Self {
 		let mut slotted_page = [0u8; PAGE_SIZE];
 		let size = slotted_page.len();
 		// Add the id at the beginning of the header
@@ -96,10 +121,13 @@ impl Page {
 			.copy_from_slice(&page_id.0.to_le_bytes());
 		// Add the flags
 		slotted_page[PAGE_HEADER_FLAG_OFFSET..PAGE_HEADER_FLAG_OFFSET + PAGE_HEADER_FLAG_SIZE]
-			.copy_from_slice(&page_type.to_le_bytes());
+			.copy_from_slice(&0u16.to_le_bytes());
+		// Write the page type
+		slotted_page[PAGE_TYPE_OFFSET..PAGE_TYPE_OFFSET + PAGE_TYPE_SIZE]
+			.copy_from_slice(&u8::from(page_type).to_le_bytes());
 		// Write page slot count
 		slotted_page[PAGE_SLOT_COUNT_OFFSET..PAGE_SLOT_COUNT_OFFSET + PAGE_SLOT_COUNT_SIZE]
-			.copy_from_slice(&0u16.to_le_bytes());
+			.copy_from_slice(&0u8.to_le_bytes());
 		// For free space locators - the first free space is end of header and last free space is end of array
 		// As we have no data right now.
 		slotted_page[HEADER_FREE_START_OFFSET..HEADER_FREE_START_OFFSET + HEADER_FREE_LOCATOR_SIZE]
@@ -113,20 +141,41 @@ impl Page {
 	// NOTE: Need to check for NonNull ptr OR maybe wrap ptr in NonNull etc
 
 	// header returns a reference to a HeaderStruct not exclusive or mutable
-	fn header(&self) -> &HeaderStruct {
-		assert_eq!(mem::size_of::<HeaderStruct>(), HEADER_SIZE, "Header size not equal to header struct alignment");
+	fn header_mut(&mut self) -> &mut Header {
+		assert_eq!(mem::size_of::<Header>(), HEADER_SIZE, "Header size not equal to header struct alignment");
 		// SAFETY: We guarantee that:
 		//  - PAGE_SIZE ≥ HEADER_OFFSET + size_of::<HeaderStruct>()
-		//  - buf.as_ptr().add(HEADER_OFFSET) is properly aligned for HeaderStruct
+		//  - slotted_page.as_ptr().add(HEADER_OFFSET) is properly aligned for HeaderStruct
 		//  - the bytes at that offset have been initialized to HeaderStruct form
 		unsafe {
-			// Need to understand this...
+			//SAFETY: We are safe to return a mutable ref to HeaderStruct because borrow checker
+			// enforces that only one exclusive of page is available and, therefore, we cannot create
+			// more than one mut ref HeaderStruct
 
-			//“When using a raw pointer, you must manually ensure that the pointer is non-null,
-			// properly aligned for the type T, points to initialized memory of type T, and meets the aliasing/mutability rules.”
-
-			&*(self.slotted_page.as_ptr().add(PAGE_OFFSET) as *const HeaderStruct)
+			// Here we are saying we want a mut ref of the thing that the pointer is pointing to
+			&mut *(self.slotted_page.as_ptr().add(PAGE_OFFSET) as *mut Header)
 		}
+	}
+
+	// Header specific reference methods
+	const fn slot_count(&self) -> u8 {
+		self.slotted_page[PAGE_SLOT_COUNT_OFFSET]
+	}
+
+	fn free_start(&self) -> usize {
+		let bytes = &self.slotted_page[HEADER_FREE_START_OFFSET.. HEADER_FREE_START_OFFSET + HEADER_FREE_LOCATOR_SIZE];
+		u16::from_le_bytes(bytes.try_into().unwrap()) as usize
+	}
+
+	fn slot_dir_mut(&mut self) -> SlotDir<'_> {
+
+		// TODO - Finish - we try return zero size slice and see how we go with future methods
+		let header = HEADER_SIZE;
+		let lower = self.free_start();
+
+		let slot_dir = &mut self.slotted_page[header..lower];
+
+		SlotDir{ se: slot_dir }
 	}
 
 	// Page main methods
@@ -137,15 +186,40 @@ impl Page {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
-struct HeaderStruct {
-	page_id:   u64, // Needs 8 bytes alignment -> Offset 0 = OK
-	flags:     u16, // Needs 2 bytes alignment -> Offset 8 % 2 = 0 = OK
-	slot_count: u8, // Needs 1 byte  alignment -> Offset 10 % 2 = 0 = OK
-	free_start: u16,// Needs 2 bytes alignment -> Offset 12 % 2 = 0 = OK
-	free_end:   u16,// Needs 2 bytes alignment -> Offset 12 % 2 = 0 = OK
+#[derive(Debug)]
+struct Header {
+	page_id:    u64,
+	flags:      u16,
+	page_type:  u8,
+	slot_count: u8,
+	free_start: u16,
+	free_end:   u16,
 	// Final Offset = 16 (after padding) = multiple of 8 so no further padding
 }
+
+
+// The only way to index into cells within the page is through the SlotDir which is the directory
+// for the ptr and len of all cells
+
+// TODO - We need to cast once to [SlotEntry]
+//NOTE: We do so in memory using Little-Endian and when we flush to disk we enforce that byte layout by writing it that way
+// To enforce cross architecture portability
+
+struct SlotDir<'a> {
+	se: &'a mut [u8],
+}
+
+//TODO Impl SlotDir and also implement Iter to go through SlotEntries
+// The Impl block should define methods for extracting SlotEntry and working with them?
+
+// We need to be able to cast to SlotEntry to avoid from_le_bytes.
+#[repr(C)]
+struct SlotEntry {
+	id: u8,
+	len: u8,
+}
+
+// We would want to use the impl block to build cell views but tie them to the lifetime of the page
 
 
 #[cfg(test)]
@@ -157,7 +231,7 @@ mod tests {
 	fn test_new_page() {
 
 		let page_id = PageID(1234u64);
-		let page = Page::new(page_id, TUPLE_FLAG);
+		let page = Page::new(page_id, PageType::Internal);
 
 		let mut id = [0u8; PAGE_HEADER_ID_SIZE];
 		id.copy_from_slice(&page.slotted_page[PAGE_HEADER_ID_OFFSET .. PAGE_HEADER_ID_OFFSET + PAGE_HEADER_ID_SIZE]);
@@ -172,19 +246,14 @@ mod tests {
 	fn test_unsafe_header() {
 
 		let page_id = PageID(1234u64);
-		let page = Page::new(page_id, TUPLE_FLAG);
+		let mut page = Page::new(page_id, PageType::Internal);
 
-		let header = page.header();
+		let header = page.header_mut();
 
 		println!("{:?}", header);
 
-		let test_head = HeaderStruct{page_id: 0, flags: 1, slot_count: 2, free_start: 3, free_end: 4};
-		// let risky = *(&test_head); // Copy fresh struct as HeaderStruct implements Copy
-		let risky = unsafe { *(&test_head as *const HeaderStruct) }; // Zero copy uses raw pointers
-		println!("Risky -> {:?}", risky);
-
-		println!("size_of::<HeaderStruct>() = {}", mem::size_of::<HeaderStruct>());
-		println!("align_of::<HeaderStruct>()  = {}", mem::align_of::<HeaderStruct>());
+		println!("size_of::<HeaderStruct>() = {}", mem::size_of::<Header>());
+		println!("align_of::<HeaderStruct>()  = {}", mem::align_of::<Header>());
 
 	}
 
