@@ -138,6 +138,29 @@ impl Page {
 		Self { slotted_page, }
 	}
 
+	// TODO This would have to be with an index
+
+	fn insert_slot(&mut self, slot: SlotEntry) -> Result<(), String> {
+
+		let slot_bytes = slot.to_bytes();
+
+		let free_start = self.free_start();
+		let free_end = self.free_end();
+
+		if (free_end - free_start) < 4 {
+			return Err(format!("Not enough free space {}", (free_end - free_start)));
+		}
+
+		self.slotted_page[free_start..free_start + mem::size_of::<SlotEntry>()]
+			.copy_from_slice(slot_bytes);
+
+		let header = self.header_mut();
+		header.slot_count += 1;
+		header.free_start += mem::size_of::<SlotEntry>() as u16;
+
+		Ok(())
+	}
+
 	// NOTE: Need to check for NonNull ptr OR maybe wrap ptr in NonNull etc
 
 	// header returns a reference to a HeaderStruct not exclusive or mutable
@@ -167,6 +190,11 @@ impl Page {
 		u16::from_le_bytes(bytes.try_into().unwrap()) as usize
 	}
 
+	fn free_end(&self) -> usize {
+		let bytes = &self.slotted_page[HEADER_FREE_END_OFFSET.. HEADER_FREE_END_OFFSET + HEADER_FREE_LOCATOR_SIZE];
+		u16::from_le_bytes(bytes.try_into().unwrap()) as usize
+	}
+
 	fn slot_dir_mut(&mut self) -> SlotDir<'_> {
 		let header = HEADER_SIZE;
 		let lower = self.free_start();
@@ -176,6 +204,8 @@ impl Page {
 		SlotDir::from_raw_bytes_mut(sc, slot_bytes)
 
 	}
+
+	// TODO Need a key_lookup
 
 	// Page main methods
 	// pub fn get(&self, slot_id: SlotID) -> Option<&[u8]> {}
@@ -207,6 +237,11 @@ struct SlotDir<'a> {
 	se: &'a mut [SlotEntry],
 }
 
+//TODO
+// - SlotDir needs to implement Iter
+// - Need to have a method for key comparison
+// - Simple iteration with entry comparison to find index
+// - If we assume that Page creates space for a new slot already - then we can house insertion logic here
 impl SlotDir<'_> {
 	fn from_raw_bytes_mut(slot_count: usize, bytes: &'_ mut [u8]) -> SlotDir<'_> {
 
@@ -246,6 +281,16 @@ impl SlotDir<'_> {
 struct SlotEntry {
 	offset: u8,
 	len: u8,
+}
+
+impl SlotEntry {
+
+	fn to_bytes(&self) -> &[u8] {
+		unsafe {
+			slice::from_raw_parts((self as *const SlotEntry).cast::<u8>(), mem::size_of::<SlotEntry>())
+		}
+	}
+
 }
 
 
@@ -312,19 +357,11 @@ mod tests {
 
 		let se = SlotEntry { offset: 1, len: 10 };
 
-		let bytes = unsafe { slice::from_raw_parts((&se as *const SlotEntry).cast::<u8>(), mem::size_of::<SlotEntry>()) };
-
-		let start = page.free_start();
-
-		page.slotted_page[start..start + mem::size_of::<SlotEntry>()].copy_from_slice(bytes);
-
-		let header = page.header_mut();
-		header.slot_count += 1;
-		header.free_start += 2;
+		page.insert_slot(se).unwrap();
 
 		let slot_dir = page.slot_dir_mut();
 
-		println!("se {:?}", slot_dir.se[0])
+		println!("se {:?}", slot_dir.se[0]);
 
 	}
 }
