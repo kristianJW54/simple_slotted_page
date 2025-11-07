@@ -47,6 +47,7 @@
 // Use overflow page
 
 use std::{mem, slice};
+use std::ops::{Deref, DerefMut};
 
 const PAGE_SIZE: usize = 4096;
 const SLOT_ENTRY_SIZE: usize = 4;
@@ -195,17 +196,48 @@ impl Page {
 		u16::from_le_bytes(bytes.try_into().unwrap()) as usize
 	}
 
-	fn slot_dir_mut(&mut self) -> SlotDir<'_> {
+	fn slot_dir_mut(&mut self) -> SlotDirMut<'_> {
 		let header = HEADER_SIZE;
 		let lower = self.free_start();
 		let sc = self.slot_count() as usize;
 		let slot_bytes = &mut self.slotted_page[header..lower];
 
-		SlotDir::from_raw_bytes_mut(sc, slot_bytes)
+		SlotDirMut::from_raw_bytes_mut(sc, slot_bytes)
 
 	}
 
+	fn slot_dir(&self) -> SlotDirRef<'_> {
+		let header = HEADER_SIZE;
+		let lower = self.free_start();
+		let sc = self.slot_count() as usize;
+		let slot_bytes = &self.slotted_page[header..lower];
+
+		SlotDirRef::from_raw_bytes(sc, slot_bytes)
+
+	}
+
+    // Find index order
+	fn find_index_order(&self, key: u8) -> usize {
+		if self.slot_count() == 0 {
+			return 0;
+		}
+
+		for i in self.slot_dir().iter() {
+			//TODO Think about the logic of how we take a SlotEntry and then lookup a key
+			// to do a comparison of keys while not running into borrow checker problems
+			// may need unsafe
+			println!("{:?}", i);
+		}
+
+		0
+
+	}
+
+	// Need a get cell which we can then call get key on the cell method
+
 	// TODO Need a key_lookup
+
+	// TODO Need a Slot space allocator
 
 	// Page main methods
 	// pub fn get(&self, slot_id: SlotID) -> Option<&[u8]> {}
@@ -233,17 +265,16 @@ struct Header {
 //NOTE: We do so in memory using Little-Endian and when we flush to disk we enforce that byte layout by writing it that way
 // To enforce cross architecture portability
 
-struct SlotDir<'a> {
+struct SlotDirMut<'a> {
 	se: &'a mut [SlotEntry],
 }
 
 //TODO
-// - SlotDir needs to implement Iter
-// - Need to have a method for key comparison
-// - Simple iteration with entry comparison to find index
 // - If we assume that Page creates space for a new slot already - then we can house insertion logic here
-impl SlotDir<'_> {
-	fn from_raw_bytes_mut(slot_count: usize, bytes: &'_ mut [u8]) -> SlotDir<'_> {
+
+// TODO - Both SlotDirs share the same from_raw_parts methods so can we use a trait?
+impl SlotDirMut<'_> {
+	fn from_raw_bytes_mut(slot_count: usize, bytes: &'_ mut [u8]) -> SlotDirMut<'_> {
 
 		let expected_len = slot_count * mem::size_of::<SlotEntry>();
 		let actual_len = bytes.len();
@@ -268,7 +299,61 @@ impl SlotDir<'_> {
 		let slot_entries = unsafe {
 			slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut SlotEntry, slot_count)
 		};
-		SlotDir { se: slot_entries }
+		SlotDirMut { se: slot_entries }
+	}
+}
+
+impl Deref for SlotDirMut<'_> {
+	type Target = [SlotEntry];
+	fn deref(&self) -> &Self::Target {
+		&self.se
+	}
+}
+
+impl DerefMut for SlotDirMut<'_> {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.se
+	}
+}
+
+struct SlotDirRef<'a> {
+	se: &'a [SlotEntry],
+}
+
+impl SlotDirRef<'_> {
+	fn from_raw_bytes(slot_count: usize, bytes: &'_ [u8]) -> SlotDirRef<'_> {
+
+		let expected_len = slot_count * mem::size_of::<SlotEntry>();
+		let actual_len = bytes.len();
+
+		assert_eq!(
+			actual_len,
+			expected_len,
+			"SlotDir region length mismatch: got {} bytes, expected {} bytes ({} entries * {} bytes each)",
+			actual_len,
+			expected_len,
+			slot_count,
+			mem::size_of::<SlotEntry>(),
+		);
+
+		// Sanity check: Slot Entry must be of size 2
+		assert_eq!(mem::size_of::<SlotEntry>(), 2);
+
+		//SAFETY: We ensure the correct alignment and size of SlotEntry and that the bytes point to a valid
+		// region of data as this method is called only within the Page Impl block and the byte slice extracted
+		// is the exact region of the slot array.
+		// We also ensure that is only called in an exclusive mutably borrowed method ties to the lifetime of the Page
+		let slot_entries = unsafe {
+			slice::from_raw_parts(bytes.as_ptr() as *const SlotEntry, slot_count)
+		};
+		SlotDirRef { se: slot_entries }
+	}
+}
+
+impl Deref for SlotDirRef<'_> {
+	type Target = [SlotEntry];
+	fn deref(&self) -> &Self::Target {
+		&self.se
 	}
 }
 
@@ -358,10 +443,13 @@ mod tests {
 		let se = SlotEntry { offset: 1, len: 10 };
 
 		page.insert_slot(se).unwrap();
+		page.insert_slot(SlotEntry{ offset: 2, len: 9 }).unwrap();
 
 		let slot_dir = page.slot_dir_mut();
 
-		println!("se {:?}", slot_dir.se[0]);
+		for i in slot_dir.iter() {
+			println!("{:?}", i)
+		}
 
 	}
 }
