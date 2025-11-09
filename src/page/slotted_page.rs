@@ -207,13 +207,13 @@ impl Page {
 
 	}
 
-	fn slot_dir(&self) -> SlotDirRef<'_> {
+	fn slot_dir(&self) -> SlotDirRef {
 		let header = HEADER_SIZE;
 		let lower = self.free_start();
 		let sc = self.slot_count() as usize;
 		let slot_bytes = &self.slotted_page[header..lower];
 
-		SlotDirRef::from_raw_bytes(sc, slot_bytes)
+		unsafe { SlotDirRef::new(self.slotted_page.as_ptr(), header, sc) }
 
 	}
 
@@ -309,17 +309,21 @@ impl DerefMut for SlotDirMut<'_> {
 	}
 }
 
+// This is similar to pulling a &'a mut [SlotEntry] in that both are fat pointers and carry a ptr and len
+// but with this we can be explicit about what we tie this to and also choose lifetime etc
 struct SlotDirRef {
 	ptr: NonNull<SlotEntry>,
 	size: usize,
 }
 
 // TODO Continue reasoning about the unsafe and safe boundaries
+
+//TODO We need to decide how to reason about accessing other parts of the while iterating through SlotEntry
+// To do this we can either house base_ptr in SlotDirRef or use a base_ptr variable outside of the loop in the method
+// both will need to have a Cell cast so we can call Cell methods on them and be safe when working with keys etc.
 impl SlotDirRef {
-	fn new(ptr: *mut u8, offset: usize, len: usize) -> SlotDirRef {
-		unsafe {
-			SlotDirRef { ptr: NonNull::new_unchecked(ptr as *mut SlotEntry), size: len }
-		}
+	unsafe fn new(ptr: *const u8, offset: usize, len: usize) -> SlotDirRef {
+		SlotDirRef { ptr: NonNull::new_unchecked(ptr as *mut SlotEntry), size: len }
 	}
 
 	unsafe fn slot_dir(&self) -> &[SlotEntry] {
@@ -327,10 +331,10 @@ impl SlotDirRef {
 	}
 }
 
-impl Deref for SlotDirRef<'_> {
+impl Deref for SlotDirRef {
 	type Target = [SlotEntry];
 	fn deref(&self) -> &Self::Target {
-		&self.se
+		unsafe { self.slot_dir() }
 	}
 }
 
