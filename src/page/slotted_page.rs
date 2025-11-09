@@ -48,6 +48,7 @@
 
 use std::{mem, slice};
 use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
 
 const PAGE_SIZE: usize = 4096;
 const SLOT_ENTRY_SIZE: usize = 4;
@@ -218,16 +219,9 @@ impl Page {
 
     // Find index order
 	fn find_index_order(&self, key: u8) -> usize {
-		if self.slot_count() == 0 {
-			return 0;
-		}
 
-		for i in self.slot_dir().iter() {
-			//TODO Think about the logic of how we take a SlotEntry and then lookup a key
-			// to do a comparison of keys while not running into borrow checker problems
-			// may need unsafe
-			println!("{:?}", i);
-		}
+		//TODO - This will be called in an insert method and will use unsafe code but the page will enforce
+		// borrowing semantics
 
 		0
 
@@ -272,7 +266,6 @@ struct SlotDirMut<'a> {
 //TODO
 // - If we assume that Page creates space for a new slot already - then we can house insertion logic here
 
-// TODO - Both SlotDirs share the same from_raw_parts methods so can we use a trait?
 impl SlotDirMut<'_> {
 	fn from_raw_bytes_mut(slot_count: usize, bytes: &'_ mut [u8]) -> SlotDirMut<'_> {
 
@@ -316,37 +309,21 @@ impl DerefMut for SlotDirMut<'_> {
 	}
 }
 
-struct SlotDirRef<'a> {
-	se: &'a [SlotEntry],
+struct SlotDirRef {
+	ptr: NonNull<SlotEntry>,
+	size: usize,
 }
 
-impl SlotDirRef<'_> {
-	fn from_raw_bytes(slot_count: usize, bytes: &'_ [u8]) -> SlotDirRef<'_> {
+// TODO Continue reasoning about the unsafe and safe boundaries
+impl SlotDirRef {
+	fn new(ptr: *mut u8, offset: usize, len: usize) -> SlotDirRef {
+		unsafe {
+			SlotDirRef { ptr: NonNull::new_unchecked(ptr as *mut SlotEntry), size: len }
+		}
+	}
 
-		let expected_len = slot_count * mem::size_of::<SlotEntry>();
-		let actual_len = bytes.len();
-
-		assert_eq!(
-			actual_len,
-			expected_len,
-			"SlotDir region length mismatch: got {} bytes, expected {} bytes ({} entries * {} bytes each)",
-			actual_len,
-			expected_len,
-			slot_count,
-			mem::size_of::<SlotEntry>(),
-		);
-
-		// Sanity check: Slot Entry must be of size 2
-		assert_eq!(mem::size_of::<SlotEntry>(), 2);
-
-		//SAFETY: We ensure the correct alignment and size of SlotEntry and that the bytes point to a valid
-		// region of data as this method is called only within the Page Impl block and the byte slice extracted
-		// is the exact region of the slot array.
-		// We also ensure that is only called in an exclusive mutably borrowed method ties to the lifetime of the Page
-		let slot_entries = unsafe {
-			slice::from_raw_parts(bytes.as_ptr() as *const SlotEntry, slot_count)
-		};
-		SlotDirRef { se: slot_entries }
+	unsafe fn slot_dir(&self) -> &[SlotEntry] {
+		slice::from_raw_parts(self.ptr.as_ptr() as *const SlotEntry, self.size)
 	}
 }
 
