@@ -220,8 +220,13 @@ impl Page {
     // Find index order
 	fn find_index_order(&self, key: u8) -> usize {
 
-		//TODO - This will be called in an insert method and will use unsafe code but the page will enforce
-		// borrowing semantics
+		// First loop through self.slot_dir.iter() {
+	    // Then for each slot entry we want to look up the key
+	    // to do that, we take the stored base pointer in slot_dir and cast a cell from the slotentry offset and len
+	    // with the cell i should get a full key
+	    // but the cell must take into account overflow pages
+	    // how??
+
 
 		0
 
