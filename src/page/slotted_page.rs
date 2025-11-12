@@ -10,10 +10,9 @@
 // Each page must have a UID to be located
 // A DBMS uses an indirection layer to map page ID's to physical locations
 
-//---- Page Types ------//
-// - Hardware -> Usually 4kb (the largest block of memory which the storage device can guarantee safe writes)
-// - OS Page  -> Usually 8kb
-// - Database -> Usually 16kb
+//NOTE: A page will only concern itself with what's within it's bounds. Header, Slot Array, Cells
+// Meaning, if a cell has an overflow, the page does not follow, but returns pointers for the level above (b-tree) to then
+// use to follow or call into other pages
 
 /*NOTE:
 	---- Page Header ------
@@ -43,7 +42,7 @@
 // Instead when a cell is removed - the pointer is nullified and we mark the space where the data occupied
 // as free blocks - this allows new data being inserted to measure if it can fit in one of the free blocks
 // and determine what block will allow for the least remaining space
-// If total free space allows but the fragmentation does not then we can rebuilt the page - otherwise we must
+// If total free space allows but the fragmentation does not then we can rebuild the page - otherwise we must
 // Use overflow page
 
 use std::{mem, slice};
