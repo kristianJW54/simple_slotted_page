@@ -7,13 +7,12 @@
 
 // Then in between pointers and cells there is free space
 
-// Each page must have a UID to be located
-// A DBMS uses an indirection layer to map page ID's to physical locations
+// Each raw_page must have a UID to be located
+// A DBMS uses an indirection layer to map raw_page ID's to physical locations
 
-//---- Page Types ------//
-// - Hardware -> Usually 4kb (the largest block of memory which the storage device can guarantee safe writes)
-// - OS Page  -> Usually 8kb
-// - Database -> Usually 16kb
+//NOTE: A raw_page will only concern itself with what's within it's bounds. Header, Slot Array, Cells
+// Meaning, if a cell has an overflow, the raw_page does not follow, but returns pointers for the level above (b-tree) to then
+// use to follow or call into other pages
 
 /*NOTE:
 	---- Page Header ------
@@ -36,15 +35,15 @@
 
  */
 
-//NOTE: In order to implement the slotted page we will need to work with a contiguous buffer as structs
+//NOTE: In order to implement the slotted raw_page we will need to work with a contiguous buffer as structs
 // add padding and alignment
 
 //NOTE: Pages are not compacted or rebuilt immediately
 // Instead when a cell is removed - the pointer is nullified and we mark the space where the data occupied
 // as free blocks - this allows new data being inserted to measure if it can fit in one of the free blocks
 // and determine what block will allow for the least remaining space
-// If total free space allows but the fragmentation does not then we can rebuilt the page - otherwise we must
-// Use overflow page
+// If total free space allows but the fragmentation does not then we can rebuild the raw_page - otherwise we must
+// Use overflow raw_page
 
 use std::{mem, slice};
 use std::ops::{Deref, DerefMut};
@@ -82,40 +81,40 @@ pub struct RowID {
 	s: SlotID,
 }
 
-enum PageType {
+pub(crate) enum RawPageType {
 	Internal,
 	Leaf,
 }
 
-impl TryFrom<u8> for PageType {
+impl TryFrom<u8> for RawPageType {
 	type Error = ();
 	fn try_from(value: u8) -> Result<Self, Self::Error> {
 		match value {
-			1 => Ok(PageType::Internal),
-			2 => Ok(PageType::Leaf),
+			1 => Ok(RawPageType::Internal),
+			2 => Ok(RawPageType::Leaf),
 			_ => Err(()),
 		}
 	}
 }
 
-impl From<PageType> for u8 {
-	fn from(value: PageType) -> Self {
+impl From<RawPageType> for u8 {
+	fn from(value: RawPageType) -> Self {
 		match value {
-			PageType::Internal => 1,
-			PageType::Leaf => 2,
+			RawPageType::Internal => 1,
+			RawPageType::Leaf => 2,
 		}
 	}
 }
 
-pub struct Page {
+pub(crate) struct RawPage {
 	slotted_page: [u8; PAGE_SIZE],
 }
 
 // Start with header (which we may move internal methods to a header.rs module)
 
-impl Page {
+impl RawPage {
 	// TODO: Add a new_with_data?
-	fn new(page_id: PageID, page_type: PageType) -> Self {
+	pub(crate) fn new(page_id: PageID, page_type: RawPageType) -> Self {
 		let mut slotted_page = [0u8; PAGE_SIZE];
 		let size = slotted_page.len();
 		// Add the id at the beginning of the header
@@ -124,10 +123,10 @@ impl Page {
 		// Add the flags
 		slotted_page[PAGE_HEADER_FLAG_OFFSET..PAGE_HEADER_FLAG_OFFSET + PAGE_HEADER_FLAG_SIZE]
 			.copy_from_slice(&0u16.to_le_bytes());
-		// Write the page type
+		// Write the raw_page type
 		slotted_page[PAGE_TYPE_OFFSET..PAGE_TYPE_OFFSET + PAGE_TYPE_SIZE]
 			.copy_from_slice(&u8::from(page_type).to_le_bytes());
-		// Write page slot count
+		// Write raw_page slot count
 		slotted_page[PAGE_SLOT_COUNT_OFFSET..PAGE_SLOT_COUNT_OFFSET + PAGE_SLOT_COUNT_SIZE]
 			.copy_from_slice(&0u8.to_le_bytes());
 		// For free space locators - the first free space is end of header and last free space is end of array
@@ -174,7 +173,7 @@ impl Page {
 		//  - the bytes at that offset have been initialized to HeaderStruct form
 		unsafe {
 			//SAFETY: We are safe to return a mutable ref to HeaderStruct because borrow checker
-			// enforces that only one exclusive of page is available and, therefore, we cannot create
+			// enforces that only one exclusive of raw_page is available and, therefore, we cannot create
 			// more than one mut ref HeaderStruct
 
 			// Here we are saying we want a mut ref of the thing that the pointer is pointing to
@@ -220,13 +219,8 @@ impl Page {
     // Find index order
 	fn find_index_order(&self, key: u8) -> usize {
 
-		// First loop through self.slot_dir.iter() {
-	    // Then for each slot entry we want to look up the key
-	    // to do that, we take the stored base pointer in slot_dir and cast a cell from the slotentry offset and len
-	    // with the cell i should get a full key
-	    // but the cell must take into account overflow pages
-	    // how??
-
+		//TODO - This will be called in an insert method and will use unsafe code but the raw_page will enforce
+		// borrowing semantics
 
 		0
 
@@ -254,11 +248,13 @@ struct Header {
 	slot_count: u8,
 	free_start: u16,
 	free_end:   u16,
+	// TODO Need a right most sibling pointer - unless we have node-high keys?
+	// TODO Do we need sibling pointers?
 	// Final Offset = 16 (after padding) = multiple of 8 so no further padding
 }
 
 
-// The only way to index into cells within the page is through the SlotDir which is the directory
+// The only way to index into cells within the raw_page is through the SlotDir which is the directory
 // for the ptr and len of all cells
 
 //NOTE: We do so in memory using Little-Endian and when we flush to disk we enforce that byte layout by writing it that way
@@ -365,7 +361,7 @@ impl SlotEntry {
 }
 
 
-// We would want to use the impl block to build cell views but tie them to the lifetime of the page
+// We would want to use the impl block to build cell views but tie them to the lifetime of the raw_page
 
 
 #[cfg(test)]
@@ -377,7 +373,7 @@ mod tests {
 	fn test_new_page() {
 
 		let page_id = PageID(1234u64);
-		let page = Page::new(page_id, PageType::Internal);
+		let page = RawPage::new(page_id, RawPageType::Internal);
 
 		let mut id = [0u8; PAGE_HEADER_ID_SIZE];
 		id.copy_from_slice(&page.slotted_page[PAGE_HEADER_ID_OFFSET .. PAGE_HEADER_ID_OFFSET + PAGE_HEADER_ID_SIZE]);
@@ -392,7 +388,7 @@ mod tests {
 	fn test_unsafe_header() {
 
 		let page_id = PageID(1234u64);
-		let mut page = Page::new(page_id, PageType::Internal);
+		let mut page = RawPage::new(page_id, RawPageType::Internal);
 
 		let header = page.header_mut();
 
@@ -406,7 +402,7 @@ mod tests {
 	#[test]
 	fn zero_slot_dir_from_new_page() {
 		let page_id = PageID(1234u64);
-		let mut page = Page::new(page_id, PageType::Internal);
+		let mut page = RawPage::new(page_id, RawPageType::Internal);
 
 		let slot_dir = page.slot_dir_mut();
 
@@ -418,7 +414,7 @@ mod tests {
 	fn slot_dir_after_adding_slot() {
 
 		let page_id = PageID(1234u64);
-		let mut page = Page::new(page_id, PageType::Internal);
+		let mut page = RawPage::new(page_id, RawPageType::Internal);
 
 		let slot_dir = page.slot_dir_mut();
 
