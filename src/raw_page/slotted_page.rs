@@ -81,7 +81,7 @@ pub struct RowID {
 	s: SlotID,
 }
 
-enum RawPageType {
+pub(crate) enum RawPageType {
 	Internal,
 	Leaf,
 }
@@ -114,7 +114,7 @@ pub(crate) struct RawPage {
 
 impl RawPage {
 	// TODO: Add a new_with_data?
-	fn new(page_id: PageID, page_type: RawPageType) -> Self {
+	pub(crate) fn new(page_id: PageID, page_type: RawPageType) -> Self {
 		let mut slotted_page = [0u8; PAGE_SIZE];
 		let size = slotted_page.len();
 		// Add the id at the beginning of the header
