@@ -1,4 +1,5 @@
 
+
 /*
 
 A B-Tree is composed of 3 elements :
@@ -8,3 +9,7 @@ A B-Tree is composed of 3 elements :
 * The *RootPage*, which is the root of the **B-Tree**
 
 */
+
+// NOTE: The b-tree directory which gives a transaction it's starting point for a route page
+
+// TODO Start here or at the transaction level
