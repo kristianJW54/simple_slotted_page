@@ -1,5 +1,5 @@
 
-// Cells are the data blocks within the page
+// Cells are the data blocks within the raw_page
 // They can be made up of fixed sized data and variable length data but not both
 
 
