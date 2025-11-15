@@ -8,3 +8,4 @@ A B-Tree is composed of 3 elements :
 * The *RootPage*, which is the root of the **B-Tree**
 
 */
+

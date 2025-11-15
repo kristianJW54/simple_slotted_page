@@ -48,6 +48,7 @@
 use std::{mem, slice};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
+use crate::page::PageID;
 
 const PAGE_SIZE: usize = 4096;
 const SLOT_ENTRY_SIZE: usize = 4;
@@ -70,10 +71,6 @@ const HEADER_FREE_START_OFFSET: usize = PAGE_SLOT_COUNT_OFFSET + PAGE_SLOT_COUNT
 const HEADER_FREE_END_OFFSET: usize = HEADER_FREE_START_OFFSET + HEADER_FREE_LOCATOR_SIZE; // 14
 
 const HEADER_SIZE: usize = HEADER_FREE_END_OFFSET + HEADER_FREE_LOCATOR_SIZE; // 16
-
-// Page ID new_type
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PageID(pub u64);
 
 pub struct SlotID(pub u16);
 pub struct RowID {
